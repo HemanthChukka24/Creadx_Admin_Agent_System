@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // This links the admin web panel directly to your localtunnel backend URL!
-const API_BASE_URL = 'http://localhost:3000/api';
+const API_BASE_URL = 'https://creadx-admin-agent-system.onrender.com';
 
 export const adminApi = axios.create({
   baseURL: API_BASE_URL, //

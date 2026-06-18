@@ -102,7 +102,7 @@ app.post('/auth/login', async (req, res) => {
 // ==========================================
 // 🌲 PANEL 1: USER APP (Screenshot 142)
 // ==========================================
-app.get('/api/user/home', async (req, res) => {
+app.get('/user/home', async (req, res) => {
     try {
         const [profiles] = await pool.query(`
             SELECT id, business_name, city, service_type, average_rating 
@@ -143,7 +143,7 @@ app.get('/api/user/home', async (req, res) => {
 // ==========================================
 // 📊 PANEL 2: ADMIN PANEL (Screenshot 143)
 // ==========================================
-app.get('/api/admin/metrics', async (req, res) => {
+app.get('/admin/metrics', async (req, res) => {
     try {
         const [[userCount]] = await pool.query("SELECT COUNT(*) as total FROM users WHERE role='customer'"); 
         const [[bookingCount]] = await pool.query("SELECT COUNT(*) as total FROM bookings"); 
@@ -167,7 +167,7 @@ app.get('/api/admin/metrics', async (req, res) => {
 // ==========================================
 // 🚖 PANEL 3: AGENT DASHBOARD (Screenshot 144)
 // ==========================================
-app.get('/api/agent/dashboard/4', async (req, res) => {
+app.get('/agent/dashboard/4', async (req, res) => {
     try {
         const [trips] = await pool.query(`
             SELECT b.id, b.status, b.scheduled_date, u.full_name as customer_name

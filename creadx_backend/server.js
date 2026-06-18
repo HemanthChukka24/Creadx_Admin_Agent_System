@@ -8,15 +8,46 @@ require('dotenv').config();
 const { requireAuth, requireRole } = require('./middleware');
 
 const app = express();
-// Clean local connection CORS policies
+const express = require('express');
+const mysql = require('mysql2/promise');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+const { requireAuth, requireRole } = require('./middleware');
+
+const app = express();
+
+// 🔓 Dynamic Configuration: Supports both local development and live production Vercel apps!
+const allowedOrigins = [
+    "http://localhost:8080", 
+    "http://127.0.0.1:8080",
+    "https://creadx-admin-agent-system.vercel.app" // 👈 Added your live Vercel link
+];
+
 app.use(cors({
-    origin: ["http://localhost:8080", "http://127.0.0.1:8080"],
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, or postman)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+// Express handling preflight requests across all endpoints
+app.options('*', cors());
+
 app.use(express.json());
 
-// Hostinger Connection Pool
+// ==========================================
+// Hostinger Connection Pool ... (keep the rest of your backend routes exactly the same)
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,

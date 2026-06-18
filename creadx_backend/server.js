@@ -57,7 +57,7 @@ const pool = mysql.createPool({
 // ==========================================
 // 🔐 AUTH SYSTEM (Supports Unified Admin & Agent Controls)
 // ==========================================
-app.post('/api/auth/login', async (req, res) => {
+app.post('/auth/login', async (req, res) => {
     try {
         const { email, password, role } = req.body; 
 

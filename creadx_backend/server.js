@@ -54,20 +54,31 @@ const pool = mysql.createPool({
     connectionLimit: 10
 });
 
-// ==========================================
-// 🔐 AUTH SYSTEM (Supports Unified Admin & Agent Controls)
+/// ==========================================
+// 🔐 AUTH SYSTEM (Updated for Precise Diagnostics)
 // ==========================================
 app.post('/auth/login', async (req, res) => {
     try {
         const { email, password, role } = req.body; 
 
-        const [rows] = await pool.query('SELECT * FROM users WHERE email = ? AND role = ?', [email, role || 'customer']);
+        // 1. First, find the user by email alone so we can give a clear error message
+        const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+        
         if (rows.length === 0) {
-            return res.status(401).json({ error: `User not found with matching role profile: ${role}.` });
+            return res.status(401).json({ error: 'User email not found in database.' });
         }
 
         const user = rows[0];
 
+        // 2. Check if the requested role matches the database profile role
+        // (Converts both to lowercase to prevent case-sensitivity issues like 'Agent' vs 'agent')
+        if (role && user.role.toLowerCase() !== role.toLowerCase()) {
+            return res.status(401).json({ 
+                error: `Role mismatch. Frontend requested: '${role}', but Database profile is registered as: '${user.role}'.` 
+            });
+        }
+
+        // 3. Verify the password string
         let isMatch = false;
         if (password === user.password_hash) { 
             isMatch = true; 
@@ -76,9 +87,10 @@ app.post('/auth/login', async (req, res) => {
         }
 
         if (!isMatch) {
-            return res.status(401).json({ error: 'Invalid authentication credentials.' });
+            return res.status(401).json({ error: 'Incorrect password.' });
         }
 
+        // 4. Issue standard JWT token
         const token = jwt.sign(
             { id: user.id, role: user.role }, 
             process.env.JWT_SECRET || 'fallback-secret-string-key', 

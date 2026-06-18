@@ -30,8 +30,9 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-//  Accepts all routes globally across all nested levels
-app.options('/:path*', cors());
+// 🔓 Clean Express v5 global preflight handler for ALL paths
+app.use(cors()); 
+app.options(cors());
 app.use(express.json());
 
 // Hostinger Connection Pool

@@ -30,7 +30,8 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.options('(.*)', cors());
+//  Accepts all routes globally across all nested levels
+app.options('/:path*', cors());
 app.use(express.json());
 
 // Hostinger Connection Pool

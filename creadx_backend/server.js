@@ -27,14 +27,14 @@ const corsOptions = {
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization", "bypass-tunnel-reminder"] // ✅ Allowed Render bypass headers safely
 };
 
 // 1. Enable standard CORS checking on all regular routes
 app.use(cors(corsOptions));
 
 // 2. 🛡️ Clean Express v5 Global Preflight Handler
-// This catches all incoming HTTP OPTIONS requests globally before they hit your paths
+// Catches all incoming HTTP OPTIONS requests globally, handles CORS rules, and responds with a 200 OK
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
@@ -43,6 +43,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
 // Hostinger Connection Pool
 const pool = mysql.createPool({
     host: process.env.DB_HOST,

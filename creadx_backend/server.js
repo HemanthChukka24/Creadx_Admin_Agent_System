@@ -8,27 +8,16 @@ require('dotenv').config();
 const { requireAuth, requireRole } = require('./middleware');
 
 const app = express();
-const express = require('express');
-const mysql = require('mysql2/promise');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-require('dotenv').config();
 
-const { requireAuth, requireRole } = require('./middleware');
-
-const app = express();
-
-// 🔓 Dynamic Configuration: Supports both local development and live production Vercel apps!
+// 🔓 Clean Dynamic CORS config (supports local dev and live Vercel app)
 const allowedOrigins = [
     "http://localhost:8080", 
     "http://127.0.0.1:8080",
-    "https://creadx-admin-agent-system.vercel.app" // 👈 Added your live Vercel link
+    "https://creadx-admin-agent-system.vercel.app"
 ];
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, or postman)
         if (!origin) return callback(null, true);
         if (allowedOrigins.indexOf(origin) === -1) {
             const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
@@ -41,13 +30,10 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-// Express handling preflight requests across all endpoints
 app.options('*', cors());
-
 app.use(express.json());
 
-// ==========================================
-// Hostinger Connection Pool ... (keep the rest of your backend routes exactly the same)
+// Hostinger Connection Pool
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -62,10 +48,8 @@ const pool = mysql.createPool({
 // ==========================================
 app.post('/api/auth/login', async (req, res) => {
     try {
-        // Catch the email, password, and chosen role from the frontend toggle
         const { email, password, role } = req.body; 
 
-        // Query user from database mapping both email and requested role type
         const [rows] = await pool.query('SELECT * FROM users WHERE email = ? AND role = ?', [email, role || 'customer']);
         if (rows.length === 0) {
             return res.status(401).json({ error: `User not found with matching role profile: ${role}.` });
@@ -73,7 +57,6 @@ app.post('/api/auth/login', async (req, res) => {
 
         const user = rows[0];
 
-        // 🛠️ FIXED CRASH: Realigned 'user.password' to match your real DBeaver 'user.password_hash' column
         let isMatch = false;
         if (password === user.password_hash) { 
             isMatch = true; 
@@ -85,14 +68,12 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid authentication credentials.' });
         }
 
-        // Sign token containing specific authorization privileges 
         const token = jwt.sign(
             { id: user.id, role: user.role }, 
             process.env.JWT_SECRET || 'fallback-secret-string-key', 
             { expiresIn: '7d' }
         );
 
-        // Return parameters cleanly matching what your components expect to read
         res.json({ 
             token, 
             user: { 
@@ -117,7 +98,6 @@ app.get('/api/user/home', async (req, res) => {
             FROM agent_profiles WHERE status = 'approved'
         `); 
 
-        // Format exactly how your user frontend expects to render lists
         const formattedList = profiles.map(p => {
             const splitDetails = p.service_type.split('|'); 
             return {
@@ -154,7 +134,6 @@ app.get('/api/user/home', async (req, res) => {
 // ==========================================
 app.get('/api/admin/metrics', async (req, res) => {
     try {
-        // Blends live database counts with your exact dashboard metric requirements
         const [[userCount]] = await pool.query("SELECT COUNT(*) as total FROM users WHERE role='customer'"); 
         const [[bookingCount]] = await pool.query("SELECT COUNT(*) as total FROM bookings"); 
 
@@ -179,7 +158,6 @@ app.get('/api/admin/metrics', async (req, res) => {
 // ==========================================
 app.get('/api/agent/dashboard/4', async (req, res) => {
     try {
-        // Pulls dynamic trips assigned to Rajesh Kumar (Agent ID: 4)
         const [trips] = await pool.query(`
             SELECT b.id, b.status, b.scheduled_date, u.full_name as customer_name
             FROM bookings b
@@ -188,7 +166,6 @@ app.get('/api/agent/dashboard/4', async (req, res) => {
             ORDER BY b.scheduled_date ASC
         `); 
 
-        // Static price map to perfectly mirror item tags from screenshot 144
         const dynamicPrices = ["₹350", "₹800", "₹450"]; 
         const dynamicTitles = ["Electronic City Drop", "Airport Terminal 2", "Whitefield, Bangalore"]; 
 

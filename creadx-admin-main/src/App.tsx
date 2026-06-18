@@ -1,5 +1,4 @@
-import { useEffect } from "react"; 
-import { adminApi } from "./lib/api";
+import { useEffect } from "react";
 import { LoginPage } from "./pages/AuthPage";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -21,38 +20,43 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-// 🛡️ Safe Security Guard in src/App.tsx
+// 🛡️ Security Guard: If token or user data is broken, BOUNCE THEM TO LOGIN!
 const ProtectedRoute = ({ allowedRole }: { allowedRole?: string }) => {
   const token = localStorage.getItem("token");
   const userString = localStorage.getItem("user");
 
-  // If token OR user object is missing, kick them out immediately
+  console.log("🛡️ ProtectedRoute Check:", { token: !!token, userString });
+
   if (!token || !userString) {
-    localStorage.clear();
+    console.log("🚨 Missing auth credentials! Forcing redirect to /login");
     return <Navigate to="/login" replace />;
   }
 
   try {
     const user = JSON.parse(userString);
     if (allowedRole && user.role !== allowedRole) {
+      console.log(`🚫 Role mismatch! Required: ${allowedRole}, Found: ${user.role}`);
       return <Navigate to="/" replace />;
     }
   } catch (e) {
-    localStorage.clear();
     return <Navigate to="/login" replace />;
   }
 
   return <Outlet />;
 };
 
-// Smart homepage distributor
+// 🏠 Smart Homepage Router
 const HomeRedirect = () => {
   const token = localStorage.getItem("token");
   const userString = localStorage.getItem("user");
-  
+
+  console.log("🏠 Gatekeeper Checking LocalStorage Session:", { token: !!token, userString });
+
+  // 🔥 FORCE REALIGNMENT: If anything is missing, force drop to login screen immediately
   if (!token || !userString) {
-    localStorage.clear();
-    return <Navigate to="/login" replace />;
+    console.log("🚨 No session found. Hard redirecting to /login...");
+    window.location.href = "/login";
+    return null; 
   }
 
   try {
@@ -61,8 +65,8 @@ const HomeRedirect = () => {
       return <Navigate to="/agent/dashboard" replace />;
     }
   } catch (e) {
-    localStorage.clear();
-    return <Navigate to="/login" replace />;
+    window.location.href = "/login";
+    return null;
   }
 
   return <Index />;
@@ -75,32 +79,34 @@ const App = () => {
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <Routes>
-            {/* Public Entry Portals */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<HomeRedirect />} />
+         <Routes>
+  {/* 🌐 1. Public Portal (Always accessible) */}
+  <Route path="/login" element={<LoginPage />} />
 
-            {/* 🛡️ Secure Admin Area: Protected by our guard layer */}
-            <Route element={<ProtectedRoute allowedRole="admin" />}>
-              <Route path="/users" element={<UsersPage />} />
-              <Route path="/agents" element={<AgentsPage />} />
-              <Route path="/posts" element={<CommunityPostsPage />} />
-              <Route path="/bookings" element={<BookingsPage />} />
-              <Route path="/revenue" element={<RevenuePage />} />
-              <Route path="/support" element={<SupportPage />} />
-              <Route path="/packages" element={<PackagesPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Route>
+  {/* 🏠 2. Root Gatekeeper (Redirects based on credentials) */}
+  <Route path="/" element={<HomeRedirect />} />
 
-            {/* 💼 Secure Agent Area */}
-            <Route element={<ProtectedRoute allowedRole="agent" />}>
-              <Route path="/agent/dashboard" element={<AgentApp />} />
-            </Route>
+  {/* 🔒 3. Protected Admin Group (ONLY accessible if token exists and role is admin) */}
+  <Route element={<ProtectedRoute allowedRole="admin" />}>
+    <Route path="/users" element={<UsersPage />} />
+    <Route path="/agents" element={<AgentsPage />} />
+    <Route path="/posts" element={<CommunityPostsPage />} />
+    <Route path="/bookings" element={<BookingsPage />} />
+    <Route path="/revenue" element={<RevenuePage />} />
+    <Route path="/support" element={<SupportPage />} />
+    <Route path="/packages" element={<PackagesPage />} />
+    <Route path="/analytics" element={<AnalyticsPage />} />
+    <Route path="/settings" element={<SettingsPage />} />
+  </Route>
 
-            {/* 🛑 Fallback Error Route */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+  {/* 🔒 4. Protected Agent Group */}
+  <Route element={<ProtectedRoute allowedRole="agent" />}>
+    <Route path="/agent/dashboard" element={<AgentApp />} />
+  </Route>
+
+  {/* 🛑 5. Fallback Error Route */}
+  <Route path="*" element={<NotFound />} />
+</Routes>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

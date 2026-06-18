@@ -9,14 +9,14 @@ const { requireAuth, requireRole } = require('./middleware');
 
 const app = express();
 
-// 🔓 Clean Dynamic CORS config (supports local dev and live Vercel app)
+// 🔓 Dynamic Configuration: Supports both local development and live production Vercel apps!
 const allowedOrigins = [
     "http://localhost:8080", 
     "http://127.0.0.1:8080",
     "https://creadx-admin-agent-system.vercel.app"
 ];
 
-app.use(cors({
+const corsOptions = {
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         if (allowedOrigins.indexOf(origin) === -1) {
@@ -28,13 +28,21 @@ app.use(cors({
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
-}));
+};
 
-// 🔓 Clean Express v5 global preflight handler for ALL paths
-app.use(cors()); 
-app.options(cors());
+// 1. Enable standard CORS checking on all regular routes
+app.use(cors(corsOptions));
+
+// 2. 🛡️ Clean Express v5 Global Preflight Handler
+// This catches all incoming HTTP OPTIONS requests globally before they hit your paths
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 app.use(express.json());
-
 // Hostinger Connection Pool
 const pool = mysql.createPool({
     host: process.env.DB_HOST,

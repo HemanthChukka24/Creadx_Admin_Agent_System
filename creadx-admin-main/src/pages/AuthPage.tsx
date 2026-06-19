@@ -1,192 +1,245 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, ShieldAlert, Briefcase, Plane, AlertCircle, Loader2 } from 'lucide-react';
-import { adminApi } from '../lib/api'; // Bridges to your backend copy
+import axios from 'axios';
 
-type UserType = 'admin' | 'agent';
+type AuthView = 'login' | 'register_agent';
+type LoginRole = 'agent' | 'admin';
 
-export const LoginPage = () => {
-  const [userType, setUserType] = useState<UserType>('admin');
+export function LoginPage() {
+  const [view, setView] = useState<AuthView>('login');
+  const [loginRole, setLoginRole] = useState<LoginRole>('agent');
+  
+  // Form State Fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [fullName, setFullName] = useState('');
+  
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
-  const navigate = useNavigate();
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const validateForm = () => {
-    const newErrors: { email?: string; password?: string } = {};
-
-    if (!email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      newErrors.email = 'Please enter a valid email';
-    }
-
-    if (!password) {
-      newErrors.password = 'Password is required';
-    } else if (password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
- const handleLogin = async (e: React.FormEvent) => {
+  // 🔑 Handle Standard Login Submission (Supports both Admin & Agent roles)
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateForm()) return;
-
     setLoading(true);
+    setMessage(null);
+
     try {
-      // 📡 Request login from your backend
-      const response = await adminApi.post('/auth/login', {
+      const response = await axios.post('https://creadx-admin-agent-system.onrender.com/auth/login', {
         email,
         password,
-        role: userType,
+        role: loginRole // Dynamically passes 'admin' or 'agent'
       });
 
-      const { token } = response.data;
-      
-      // 🔥 FIXED: Standardize local storage fields to match App.tsx exactly
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify({ role: userType }));
-
-      // 🔀 Route based on option clicked
-      if (userType === 'admin') {
-        window.location.href = "/"; // Force-reboots straight to Admin view smoothly
-      } else {
-        window.location.href = "/agent/dashboard"; // Bounces agent straight to Agent view
+      if (response.data && response.data.token) {
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        
+        // 🚀 Route seamlessly to their respective workspaces
+        if (response.data.user.role === 'admin') {
+          window.location.href = '/users'; // Triggers Admin dashboard workspace entry route
+        } else {
+          window.location.href = '/agent/dashboard'; // Triggers Agent dashboard route
+        }
       }
-    } catch (error) {
-      console.error("Login Error details:", error);
-      alert('Login failed. Please check your credentials.');
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || 'Invalid credentials or matching profile profile not found.';
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🚖 Handle New Agent Profile Registration
+  const handleAgentRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const response = await axios.post('https://creadx-admin-agent-system.onrender.com/auth/register-agent', {
+        email,
+        password,
+        name: fullName
+      });
+
+      if (response.data && response.data.success) {
+        setMessage({ type: 'success', text: 'Agent profile created successfully! You can now log in.' });
+        setFullName('');
+        setEmail('');
+        setPassword('');
+        setLoginRole('agent'); // Default to agent view choice
+        setView('login'); // Drop them right back into login workspace panel
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || 'Failed to initialize agent registration workspace profile.';
+      setMessage({ type: 'error', text: errorMsg });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f8f9fa] px-4 py-8">
-      <div className="w-full max-w-[420px] flex flex-col items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 font-sans">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
         
-        {/* Header Section */}
-        <div className="text-center mb-10 flex flex-col items-center">
-          <div className="mb-4 flex items-center justify-center w-20 h-20 rounded-full bg-[#0a7fd6] text-white shadow-lg shadow-[#0a7fd6]/30">
-            <Plane className="w-10 h-10 rotate-45" />
+        {/* Header Branding Info */}
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-md">
+            <span className="text-white text-2xl font-bold">🌍</span>
           </div>
-          <h1 className="text-2xl font-bold text-[#0a1f3b] mb-2">TourismApp Portal</h1>
-          <p className="text-sm text-gray-500 font-medium">Travel with Confidence</p>
+          <h1 className="text-2xl font-bold text-slate-800">TourismApp</h1>
+          <p className="text-sm text-slate-500 mt-1">Unified Control Management Hub</p>
         </div>
 
-        {/* Content Box */}
-        <div className="w-full bg-white border border-gray-200 rounded-xl p-7 shadow-sm">
-          {/* Toggle Section */}
-          <div className="mb-8">
-            <span className="text-sm font-semibold text-gray-700 block mb-3">Login as:</span>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setUserType('admin')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 transition-all font-semibold text-xs ${
-                  userType === 'admin'
-                    ? 'bg-[#0a7fd6] border-[#0a7fd6] text-white'
-                    : 'bg-white border-[#0a7fd6] text-[#0a7fd6] hover:bg-gray-50'
-                }`}
-              >
-                <ShieldAlert className="w-4 h-4" />
-                Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => setUserType('agent')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 transition-all font-semibold text-xs ${
-                  userType === 'agent'
-                    ? 'bg-[#0a7fd6] border-[#0a7fd6] text-white'
-                    : 'bg-white border-[#0a7fd6] text-[#0a7fd6] hover:bg-gray-50'
-                }`}
-              >
-                <Briefcase className="w-4 h-4" />
-                Agent
-              </button>
-            </div>
+        {/* System Alert Status Messages */}
+        {message && (
+          <div className={`p-3 rounded-lg mb-4 text-sm font-medium ${message.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+            {message.text}
           </div>
+        )}
 
-          {/* Form */}
-          <form onSubmit={handleLogin} className="space-y-5">
-            <h2 className="text-base font-bold text-[#0a1f3b] mb-4">
-              {userType === 'admin' ? 'Admin' : 'Agent'} Login
-            </h2>
-
-            {/* Email Field */}
-            <div>
-              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Email Address</label>
-              <div className={`flex items-center gap-2.5 bg-white border rounded-lg px-3 py-2.5 shadow-sm transition-colors ${errors.email ? 'border-red-500 bg-red-50/50' : 'border-gray-200'}`}>
-                <Mail className="w-4 h-4 text-[#0a7fd6]" />
-                <input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (errors.email) setErrors({ ...errors, email: undefined });
-                  }}
-                  className="w-full text-sm outline-none bg-transparent text-gray-800 placeholder-gray-300"
-                  disabled={loading}
-                />
-              </div>
-              {errors.email && (
-                <div className="flex items-center gap-1.5 text-red-500 text-xs mt-1.5 font-medium pl-1">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>{errors.email}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Password Field */}
-            <div>
-              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Password</label>
-              <div className={`flex items-center gap-2.5 bg-white border rounded-lg px-3 py-2.5 shadow-sm transition-colors ${errors.password ? 'border-red-500 bg-red-50/50' : 'border-gray-200'}`}>
-                <Lock className="w-4 h-4 text-[#0a7fd6]" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (errors.password) setErrors({ ...errors, password: undefined });
-                  }}
-                  className="w-full text-sm outline-none bg-transparent text-gray-800 placeholder-gray-300"
-                  disabled={loading}
-                />
+        {/* ====================================
+            VIEW PANEL 1: UNIFIED SIGN-IN FORMS
+            ==================================== */}
+        {view === 'login' ? (
+          <form onSubmit={handleLogin} className="space-y-4">
+            
+            {/* Native App-Style Role Toggle Switch */}
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-2">Access Level Configuration:</label>
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition duration-200 flex items-center justify-center gap-1.5 ${loginRole === 'agent' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                  onClick={() => setLoginRole('agent')}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  💼 Agent Portal
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition duration-200 flex items-center justify-center gap-1.5 ${loginRole === 'admin' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                  onClick={() => setLoginRole('admin')}
+                >
+                  🛡️ System Admin
                 </button>
               </div>
-              {errors.password && (
-                <div className="flex items-center gap-1.5 text-red-500 text-xs mt-1.5 font-medium pl-1">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>{errors.password}</span>
-                </div>
-              )}
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
+            <h2 className="text-md font-bold text-slate-800 capitalize mb-1">{loginRole} Verification Sign-In</h2>
+            
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Email Address</label>
+              <input 
+                type="email" 
+                required
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-blue-500"
+                placeholder={loginRole === 'admin' ? 'admin@creadx.com' : 'anita@creadx.com'}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
+              <input 
+                type="password" 
+                required
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-blue-500"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+
+            <button 
+              type="submit" 
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 bg-[#0a7fd6] text-white py-3 rounded-lg font-bold text-sm shadow-md shadow-[#0a7fd6]/20 hover:bg-[#0a6ec2] transition-colors disabled:opacity-60"
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition shadow-sm"
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Login'}
+              {loading ? 'Validating Profile Credentials...' : `Log In as ${loginRole}`}
             </button>
+
+            {/* Dynamic Footnotes to Allow Agent Signup Action */}
+            <div className="text-center mt-5 pt-3 border-t border-slate-100">
+              <span className="text-xs text-slate-500">Want to run tour operations? </span>
+              <button 
+                type="button"
+                className="text-xs text-blue-600 font-bold hover:underline"
+                onClick={() => { setView('register_agent'); setMessage(null); }}
+              >
+                Create Agent Account
+              </button>
+            </div>
           </form>
-        </div>
+        ) : (
+          
+          /* ====================================
+             VIEW PANEL 2: AGENT CREATION PANEL EXCLUSIVE
+             ==================================== */
+          <form onSubmit={handleAgentRegister} className="space-y-4">
+            <div className="flex justify-between items-center mb-1">
+              <h2 className="text-md font-bold text-slate-800">Become an Agent Partner</h2>
+              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-md uppercase border border-emerald-200">Registration Portal</span>
+            </div>
+            <p className="text-xs text-slate-500 mb-2">Create your professional profile row to access client trip logs and metrics.</p>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Full Operator Name</label>
+              <input 
+                type="text" 
+                required
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-blue-500"
+                placeholder="Anita Kumar"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Professional Email Address</label>
+              <input 
+                type="email" 
+                required
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-blue-500"
+                placeholder="anita@creadx.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Secure Password</label>
+              <input 
+                type="password" 
+                required
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-blue-500"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={loading}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition shadow-sm"
+            >
+              {loading ? 'Generating System Entry...' : 'Register Agent Profile'}
+            </button>
+
+            <div className="text-center mt-4 pt-3 border-t border-slate-100">
+              <span className="text-xs text-slate-500">Already registered? </span>
+              <button 
+                type="button"
+                className="text-xs text-blue-600 font-bold hover:underline"
+                onClick={() => { setView('login'); setMessage(null); }}
+              >
+                Return to Portal Access Screen
+              </button>
+            </div>
+          </form>
+        )}
+
       </div>
     </div>
   );
-};
-export default LoginPage;
+}

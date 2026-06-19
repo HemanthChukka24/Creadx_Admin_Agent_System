@@ -1,6 +1,4 @@
-// Enforces a fresh login state every time the browser tab/window initializes
-localStorage.removeItem('token'); 
-localStorage.removeItem('userString'); // Or whatever key holds {"role":"agent"}import { useEffect } from "react";
+import { useEffect } from "react";
 import { LoginPage } from "./pages/AuthPage";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -75,40 +73,56 @@ const HomeRedirect = () => {
 };
 
 const App = () => {
+  // 🛡️ Session Initialization Hook
+  // Enforces a fresh login state ONLY when the browser window or tab is opened first time!
+  useEffect(() => {
+    const hasClearedThisSession = sessionStorage.getItem('session_initialized');
+    
+    if (!hasClearedThisSession) {
+      localStorage.removeItem('token'); 
+      localStorage.removeItem('user'); 
+      localStorage.removeItem('userString'); // Clear residual old data keys
+      
+      // Lock the session state so internal route refreshes do not delete active logins
+      sessionStorage.setItem('session_initialized', 'true');
+      console.log("🧹 Initialized tab workspace: Active local state cleared securely.");
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
         <Sonner />
         <BrowserRouter>
-         <Routes>
-  {/* 🌐 1. Public Portal (Always accessible) */}
-  <Route path="/login" element={<LoginPage />} />
+          <Routes>
+            {/* 🌐 1. Public Portal (Always accessible) */}
+            <Route path="/login" element={<LoginPage />} />
 
-  {/* 🏠 2. Root Gatekeeper (Redirects based on credentials) */}
-  <Route path="/" element={<HomeRedirect />} />
+            {/* 🏠 2. Root Gatekeeper (Redirects based on credentials) */}
+            <Route path="/" element={<HomeRedirect />} />
 
-  {/* 🔒 3. Protected Admin Group (ONLY accessible if token exists and role is admin) */}
-  <Route element={<ProtectedRoute allowedRole="admin" />}>
-    <Route path="/users" element={<UsersPage />} />
-    <Route path="/agents" element={<AgentsPage />} />
-    <Route path="/posts" element={<CommunityPostsPage />} />
-    <Route path="/bookings" element={<BookingsPage />} />
-    <Route path="/revenue" element={<RevenuePage />} />
-    <Route path="/support" element={<SupportPage />} />
-    <Route path="/packages" element={<PackagesPage />} />
-    <Route path="/analytics" element={<AnalyticsPage />} />
-    <Route path="/settings" element={<SettingsPage />} />
-  </Route>
+            {/* 🔒 3. Protected Admin Group (ONLY accessible if token exists and role is admin) */}
+            <Route element={<ProtectedRoute allowedRole="admin" />}>
+              <Route path="/users" element={<UsersPage />} />
+              <Route path="/agents" element={<AgentsPage />} />
+              <Route path="/posts" element={<CommunityPostsPage />} />
+              <Route path="/bookings" element={<BookingsPage />} />
+              <Route path="/revenue" element={<RevenuePage />} />
+              <Route path="/support" element={<SupportPage />} />
+              <Route path="/packages" element={<PackagesPage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
 
-  {/* 🔒 4. Protected Agent Group */}
-  <Route element={<ProtectedRoute allowedRole="agent" />}>
-    <Route path="/agent/dashboard" element={<AgentApp />} />
-  </Route>
+            {/* 🔒 4. Protected Agent Group */}
+            <Route element={<ProtectedRoute allowedRole="agent" />}>
+              <Route path="/agent/dashboard" element={<AgentApp />} />
+            </Route>
 
-  {/* 🛑 5. Fallback Error Route */}
-  <Route path="*" element={<NotFound />} />
-</Routes>
+            {/* 🛑 5. Fallback Error Route */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

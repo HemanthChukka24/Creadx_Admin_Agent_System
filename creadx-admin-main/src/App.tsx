@@ -1,4 +1,6 @@
-import { useEffect } from "react";
+// Enforces a fresh login state every time the browser tab/window initializes
+localStorage.removeItem('token'); 
+localStorage.removeItem('userString'); // Or whatever key holds {"role":"agent"}import { useEffect } from "react";
 import { LoginPage } from "./pages/AuthPage";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";

@@ -392,30 +392,32 @@ app.get('/agent/offers', requireAuth, requireRole('agent'), async (req, res) => 
   }
 });
 
-// GET /agent/earnings — agent's commission summary
 app.get('/agent/earnings', requireAuth, requireRole('agent'), async (req, res) => {
   try {
-    const agentId = await getAgentProfileId(req.user.id);
-    if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
+    const [agentRows] = await pool.query(
+      'SELECT * FROM agent_profiles WHERE user_id = ?', [req.user.id]
+    );
+    if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
+    const agent = agentRows[0];
 
-    const [[totals]] = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) AS totalEarned,
-             COALESCE(SUM(CASE WHEN is_paid THEN amount ELSE 0 END), 0) AS totalPaid,
-             COALESCE(SUM(CASE WHEN NOT is_paid THEN amount ELSE 0 END), 0) AS totalPending
-      FROM commissions WHERE agent_id = ?
-    `, [agentId]);
-
-    const [history] = await pool.query(`
-      SELECT c.id, c.amount, c.is_paid, c.created_at, c.paid_at, b.scheduled_date
+    const [commissions] = await pool.query(`
+      SELECT c.*, 
+             p.name AS package_name,
+             b.customer_name
       FROM commissions c
-      JOIN bookings b ON c.booking_id = b.id
+      LEFT JOIN bookings b ON c.booking_id = b.id
+      LEFT JOIN packages p ON b.package_id = p.id
       WHERE c.agent_id = ?
       ORDER BY c.created_at DESC
-    `, [agentId]);
+    `, [agent.id]);
 
-    res.json({ totals, history });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    const total  = commissions.reduce((sum, c) => sum + Number(c.amount), 0);
+    const paid   = commissions.filter(c => c.is_paid).reduce((sum, c) => sum + Number(c.amount), 0);
+    const unpaid = total - paid;
+
+    res.json({ total, paid, unpaid, commissions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

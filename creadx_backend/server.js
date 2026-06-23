@@ -373,7 +373,7 @@ app.post('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) 
 
     const [result] = await pool.query(
       `INSERT INTO bookings (agent_id, customer_id, scheduled_date, status) VALUES (?, ?, ?, ?)`,
-      [agentId, customer_id, scheduled_date, status || 'pending']
+      [agentId, customer_id, scheduled_date, status || 'requested']
     );
 
     res.status(201).json({ id: result.insertId, message: 'Booking created' });

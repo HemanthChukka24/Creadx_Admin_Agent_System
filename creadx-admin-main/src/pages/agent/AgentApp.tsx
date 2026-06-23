@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Briefcase, CalendarCheck, Wallet, UserCircle } from "lucide-react";
+import { Home, Briefcase, CalendarCheck, Wallet, UserCircle } from "lucide-react";
+import { HomeTab } from "./HomeTab";
 import { OffersTab } from "./OffersTab";
 import { BookingsTab } from "./BookingsTab";
 import { EarningsTab } from "./EarningsTab";
 import { ProfileTab } from "./ProfileTab";
 
 const tabs = [
+  { id: "home", label: "Home", icon: Home },
   { id: "offers", label: "Offers", icon: Briefcase },
   { id: "bookings", label: "Bookings", icon: CalendarCheck },
   { id: "earnings", label: "Earnings", icon: Wallet },
@@ -15,7 +17,7 @@ const tabs = [
 type TabId = (typeof tabs)[number]["id"];
 
 export default function AgentApp() {
-  const [activeTab, setActiveTab] = useState<TabId>("offers");
+  const [activeTab, setActiveTab] = useState<TabId>("home");
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -26,6 +28,7 @@ export default function AgentApp() {
 
       {/* Tab content */}
       <div className="max-w-md mx-auto">
+        {activeTab === "home" && <HomeTab />}
         {activeTab === "offers" && <OffersTab />}
         {activeTab === "bookings" && <BookingsTab />}
         {activeTab === "earnings" && <EarningsTab />}

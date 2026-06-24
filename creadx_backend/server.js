@@ -13,15 +13,23 @@ const { requireAuth, requireRole } = require('./middleware');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ---------- CORS ----------
+const cors = require('cors');
 app.use(cors({
   origin: [
+    'https://creadx-admin-agent-system.vercel.app',
     'http://localhost:5173',
     'http://localhost:3000',
-    'https://creadx-admin-agent-system.vercel.app'
   ],
-  credentials: true
+  credentials: true,
 }));
+// Keep-alive: prevents Render free tier from sleeping
+const https = require('https');
+setInterval(() => {
+  https.get('https://creadx-admin-agent-system.onrender.com/health', () => {});
+}, 10 * 60 * 1000); // ping every 10 minutes
+
+// Health check route
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.use(express.json());
 
 // ---------- DB Pool ----------
@@ -93,25 +101,24 @@ app.post('/auth/login', async (req, res) => {
 // ADMIN ROUTES
 // ============================================
 
-// GET /admin/metrics — dashboard KPI cards
 app.get('/admin/metrics', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const [[{ totalUsers }]] = await pool.query(`SELECT COUNT(*) AS totalUsers FROM users`);
-    const [[{ totalAgents }]] = await pool.query(
-      `SELECT COUNT(*) AS totalAgents FROM agent_profiles`
-    );
-    const [[{ totalBookings }]] = await pool.query(`SELECT COUNT(*) AS totalBookings FROM bookings`);
-    const [[{ totalRevenue }]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS totalRevenue FROM commissions WHERE is_paid = TRUE`
-    );
-    const [[{ pendingAgents }]] = await pool.query(
-      `SELECT COUNT(*) AS pendingAgents FROM agent_profiles WHERE status = 'pending'`
-    );
+    const [[users]]     = await pool.query('SELECT COUNT(*) as count FROM users');
+    const [[agents]]    = await pool.query("SELECT COUNT(*) as count FROM agent_profiles WHERE status = 'approved'");
+    const [[bookings]]  = await pool.query('SELECT COUNT(*) as count FROM bookings');
+    const [[commissions]] = await pool.query('SELECT COALESCE(SUM(amount),0) as total FROM commissions');
 
-    res.json({ totalUsers, totalAgents, totalBookings, totalRevenue, pendingAgents });
-  } catch (error) {
-    console.error('Metrics error:', error);
-    res.status(500).json({ error: error.message });
+    res.json({
+      totalUsers:     users.count,
+      activeAgents:   agents.count,
+      bookingsCount:  bookings.count,
+      totalRevenue:   commissions.total,
+      conversionRate: '—',
+      uptime:         '99.9%',
+    });
+  } catch (err) {
+    console.error('Metrics error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

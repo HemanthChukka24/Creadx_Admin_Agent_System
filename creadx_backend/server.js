@@ -157,22 +157,21 @@ app.put('/admin/agents/:id/status', requireAuth, requireRole('admin'), async (re
   }
 });
 
-// GET /admin/bookings — all bookings with joins
 app.get('/admin/bookings', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const [rows] = await pool.query(`
-      SELECT b.id, b.status, b.scheduled_date,
-             cu.full_name AS customer_name, cu.email AS customer_email,
-             ap.business_name AS agent_name
+    const [bookings] = await pool.query(`
+      SELECT b.*, 
+             u.full_name AS agent_name,
+             c.full_name AS customer_name
       FROM bookings b
-      JOIN users cu ON b.customer_id = cu.id
-      JOIN agent_profiles ap ON b.agent_id = ap.id
+      LEFT JOIN agent_profiles ap ON b.agent_id = ap.id
+      LEFT JOIN users u ON ap.user_id = u.id
+      LEFT JOIN users c ON b.customer_id = c.id
       ORDER BY b.scheduled_date DESC
     `);
-    res.json(rows);
-  } catch (error) {
-    console.error('List bookings error:', error);
-    res.status(500).json({ error: error.message });
+    res.json({ bookings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

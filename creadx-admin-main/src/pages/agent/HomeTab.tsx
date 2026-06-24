@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   MapPin, Star, ShieldCheck, Wallet, CalendarCheck, Tag,
-  Bell, Clock, ChevronRight, Wifi, WifiOff,
+  Bell, Clock, Wifi, WifiOff,
 } from "lucide-react";
 import { adminApi } from "@/lib/api";
 
@@ -10,6 +10,7 @@ interface UpcomingTrip {
   status: string;
   scheduled_date: string;
   customer_name: string;
+  destination_title: string;
 }
 
 interface DashboardData {
@@ -19,11 +20,9 @@ interface DashboardData {
 }
 
 interface EarningsData {
-  totals: {
-    totalEarned: string | number;
-    totalPaid: string | number;
-    totalPending: string | number;
-  };
+  total: number;
+  paid: number;
+  unpaid: number;
 }
 
 export function HomeTab() {
@@ -53,12 +52,14 @@ export function HomeTab() {
         setDashboard(dashboardRes.data);
         setEarnings(earningsRes.data);
 
-        const active = (bookingsRes.data || []).filter(
+        const bookingsList = bookingsRes.data?.bookings || bookingsRes.data || [];
+        const active = bookingsList.filter(
           (b: { status: string }) => !["completed", "cancelled"].includes(b.status)
         );
         setActiveBookingsCount(active.length);
 
-        const pending = (leadsRes.data || []).filter(
+        const leadsList = leadsRes.data?.leads || leadsRes.data || [];
+        const pending = leadsList.filter(
           (l: { status: string }) => l.status === "new"
         );
         setPendingLeadsCount(pending.length);
@@ -120,7 +121,7 @@ export function HomeTab() {
           </button>
         </div>
 
-        {/* Online toggle — UI only for now, no backend status field yet */}
+        {/* Online toggle — UI only, no backend status field yet */}
         <button
           onClick={() => setIsOnline(!isOnline)}
           className={`flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
@@ -146,7 +147,7 @@ export function HomeTab() {
               <Wallet className="h-4 w-4" />
             </div>
             <p className="text-base font-extrabold text-slate-900">
-              ${earnings?.totals.totalEarned ?? 0}
+              ${earnings?.total ?? 0}
             </p>
             <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
               Total Earnings
@@ -190,16 +191,19 @@ export function HomeTab() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm text-slate-900 truncate">
-                      {trip.customer_name}
+                      {trip.destination_title || trip.customer_name}
                     </p>
                     <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                       <span className="flex items-center gap-0.5">
                         <Clock className="h-3 w-3" />
                         {new Date(trip.scheduled_date).toLocaleDateString()}
                       </span>
+                      {trip.customer_name && (
+                        <span className="truncate">· {trip.customer_name}</span>
+                      )}
                     </div>
                   </div>
-                  <span className="text-[10px] font-medium text-teal-600 bg-teal-50 rounded-full px-2 py-0.5 shrink-0">
+                  <span className="text-[10px] font-medium text-teal-600 bg-teal-50 rounded-full px-2 py-0.5 shrink-0 capitalize">
                     {trip.status}
                   </span>
                 </div>

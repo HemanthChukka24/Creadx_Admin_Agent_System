@@ -100,19 +100,18 @@ app.post('/auth/login', async (req, res) => {
 // ============================================
 // ADMIN ROUTES
 // ============================================
-
 app.get('/admin/metrics', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const [[users]]     = await pool.query('SELECT COUNT(*) as count FROM users');
-    const [[agents]]    = await pool.query("SELECT COUNT(*) as count FROM agent_profiles WHERE status = 'approved'");
-    const [[bookings]]  = await pool.query('SELECT COUNT(*) as count FROM bookings');
-    const [[commissions]] = await pool.query('SELECT COALESCE(SUM(amount),0) as total FROM commissions');
+    const [[users]]       = await pool.query('SELECT COUNT(*) as count FROM users');
+    const [[agents]]      = await pool.query("SELECT COUNT(*) as count FROM agent_profiles WHERE status = 'approved'");
+    const [[bookings]]    = await pool.query('SELECT COUNT(*) as count FROM bookings');
+    const [[commissions]] = await pool.query('SELECT COALESCE(SUM(amount), 0) as total FROM commissions');
 
     res.json({
-      totalUsers:     users.count,
-      activeAgents:   agents.count,
-      bookingsCount:  bookings.count,
-      totalRevenue:   commissions.total,
+      totalUsers:     Number(users.count),
+      activeAgents:   Number(agents.count),    // ← was totalAgents
+      bookingsCount:  Number(bookings.count),   // ← was totalBookings
+      totalRevenue:   Number(commissions.total), // ← cast to number, not string
       conversionRate: '—',
       uptime:         '99.9%',
     });

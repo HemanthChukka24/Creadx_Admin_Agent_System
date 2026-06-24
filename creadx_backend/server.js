@@ -317,8 +317,6 @@ async function getAgentProfileId(userId) {
   const [rows] = await pool.query('SELECT id FROM agent_profiles WHERE user_id = ?', [userId]);
   return rows.length ? rows[0].id : null;
 }
-
-// GET /agent/dashboard — dynamic, replaces the old hardcoded /agent/dashboard/4
 app.get('/agent/dashboard', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const [agentRows] = await pool.query(
@@ -327,58 +325,96 @@ app.get('/agent/dashboard', requireAuth, requireRole('agent'), async (req, res) 
     if (!agentRows.length) return res.status(404).json({ error: 'Agent profile not found' });
     const agent = agentRows[0];
 
+    // Use real column names: scheduled_date, destination_title, travelers
     const [trips] = await pool.query(`
-      SELECT b.id, b.status, b.scheduled_date, u.full_name as customer_name
-      FROM bookings b JOIN users u ON b.customer_id = u.id
-      WHERE b.agent_id = ? ORDER BY b.scheduled_date ASC LIMIT 10
+      SELECT b.id, b.status, b.scheduled_date, b.end_date,
+             b.destination_title, b.travelers,
+             u.full_name AS customer_name
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_id = u.id
+      WHERE b.agent_id = ?
+        AND b.status IN ('requested', 'confirmed')
+      ORDER BY b.scheduled_date ASC
+      LIMIT 10
     `, [agent.id]);
 
-    res.json({ agentName: agent.business_name, rating: agent.average_rating, upcomingTrips: trips });
-  } catch (error) {
-    console.error('Agent dashboard error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET /agent/bookings — agent's own bookings
-app.get('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) => {
-  try {
-    const agentId = await getAgentProfileId(req.user.id);
-    if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
-
-    const [rows] = await pool.query(`
-      SELECT b.id, b.status, b.scheduled_date, u.full_name AS customer_name, u.email AS customer_email
-      FROM bookings b
-      JOIN users u ON b.customer_id = u.id
-      WHERE b.agent_id = ?
-      ORDER BY b.scheduled_date DESC
-    `, [agentId]);
-
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// POST /agent/bookings — agent creates a booking
-app.post('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) => {
-  try {
-    const agentId = await getAgentProfileId(req.user.id);
-    if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
-
-    const { customer_id, scheduled_date, status } = req.body;
-    if (!customer_id || !scheduled_date) {
-      return res.status(400).json({ error: 'customer_id and scheduled_date are required' });
-    }
-
-    const [result] = await pool.query(
-      `INSERT INTO bookings (agent_id, customer_id, scheduled_date, status) VALUES (?, ?, ?, ?)`,
-      [agentId, customer_id, scheduled_date, status || 'requested']
+    const [activeCount] = await pool.query(
+      `SELECT COUNT(*) as count FROM bookings 
+       WHERE agent_id = ? AND status IN ('requested','confirmed')`,
+      [agent.id]
     );
 
-    res.status(201).json({ id: result.insertId, message: 'Booking created' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    const [leadsCount] = await pool.query(
+      `SELECT COUNT(*) as count FROM leads 
+       WHERE agent_id = ? AND status IN ('new','contacted')`,
+      [agent.id]
+    );
+
+    const [earningsSum] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM commissions WHERE agent_id = ?`,
+      [agent.id]
+    );
+
+    res.json({
+      agentName: agent.business_name,
+      rating: agent.average_rating,
+      status: agent.status,
+      activeBookings: activeCount[0].count,
+      pendingLeads: leadsCount[0].count,
+      totalEarnings: earningsSum[0].total,
+      upcomingTrips: trips
+    });
+  } catch (err) {
+    console.error('Dashboard error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) => {
+  try {
+    const [agentRows] = await pool.query(
+      'SELECT * FROM agent_profiles WHERE user_id = ?', [req.user.id]
+    );
+    if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
+    const agent = agentRows[0];
+
+    const [bookings] = await pool.query(`
+      SELECT b.id, b.status, b.scheduled_date, b.end_date,
+             b.destination_title, b.travelers,
+             u.full_name AS customer_name,
+             u.email AS customer_email
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_id = u.id
+      WHERE b.agent_id = ?
+      ORDER BY b.scheduled_date DESC
+    `, [agent.id]);
+
+    res.json({ bookings });
+  } catch (err) {
+    console.error('Bookings error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) => {
+  try {
+    const [agentRows] = await pool.query(
+      'SELECT * FROM agent_profiles WHERE user_id = ?', [req.user.id]
+    );
+    if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
+    const agent = agentRows[0];
+
+    const { customer_id, destination_title, scheduled_date, end_date, travelers } = req.body;
+
+    await pool.query(`
+      INSERT INTO bookings (agent_id, customer_id, destination_title, scheduled_date, end_date, travelers, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'requested')
+    `, [agent.id, customer_id, destination_title, scheduled_date, end_date, travelers || 1]);
+
+    res.status(201).json({ message: 'Booking created' });
+  } catch (err) {
+    console.error('Create booking error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -400,23 +436,25 @@ app.get('/agent/earnings', requireAuth, requireRole('agent'), async (req, res) =
     if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
     const agent = agentRows[0];
 
+    // Use destination_title instead of package_name, customer via users join
     const [commissions] = await pool.query(`
-      SELECT c.*, 
-             p.name AS package_name,
-             b.customer_name
+      SELECT c.id, c.booking_id, c.amount, c.is_paid, c.created_at, c.paid_at,
+             b.destination_title AS package_name,
+             u.full_name AS customer_name
       FROM commissions c
       LEFT JOIN bookings b ON c.booking_id = b.id
-      LEFT JOIN packages p ON b.package_id = p.id
+      LEFT JOIN users u ON b.customer_id = u.id
       WHERE c.agent_id = ?
       ORDER BY c.created_at DESC
     `, [agent.id]);
 
-    const total  = commissions.reduce((sum, c) => sum + Number(c.amount), 0);
-    const paid   = commissions.filter(c => c.is_paid).reduce((sum, c) => sum + Number(c.amount), 0);
+    const total  = commissions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    const paid   = commissions.filter(c => c.is_paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
     const unpaid = total - paid;
 
     res.json({ total, paid, unpaid, commissions });
   } catch (err) {
+    console.error('Earnings error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

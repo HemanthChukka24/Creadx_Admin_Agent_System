@@ -1,3 +1,4 @@
+//RevenueChart.tsx
 import { useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -63,7 +64,7 @@ export function RevenueChart() {
               fontSize: "12px",
               color: "hsl(210, 40%, 92%)",
             }}
-            formatter={(value: number) => [`$${value.toLocaleString()}`, "Revenue"]}
+            formatter={(value: number) => [`$${(value ?? 0).toLocaleString()}`, "Revenue"]}
           />
           <Area type="monotone" dataKey="revenue" stroke="hsl(168, 76%, 42%)" strokeWidth={2} fill="url(#revenueGrad)" />
         </AreaChart>

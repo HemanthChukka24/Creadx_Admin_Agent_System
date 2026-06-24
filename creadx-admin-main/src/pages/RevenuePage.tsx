@@ -58,7 +58,7 @@ const RevenuePage = () => {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <MetricCard
                 title="Gross Revenue"
-                value={`$${Number(data?.totalRevenue ?? 0).toLocaleString()}`}
+                value={loading ? "—" : `$${Number(data?.totalRevenue ?? 0).toLocaleString()}`}
                 change="+12.5%"
                 changeType="positive"
                 icon={DollarSign}
@@ -66,7 +66,7 @@ const RevenuePage = () => {
               />
               <MetricCard
                 title="Commission Earned"
-                value={`$${Number(data?.totalCommissions ?? 0).toLocaleString()}`}
+                value={loading ? "—" : `$${Number(data?.totalCommissions ?? 0).toLocaleString()}`}
                 change="+15.8%"
                 changeType="positive"
                 icon={ArrowUpRight}
@@ -74,7 +74,7 @@ const RevenuePage = () => {
               />
               <MetricCard
                 title="Net Revenue"
-                value={`$${Number((data?.totalRevenue ?? 0) - (data?.totalCommissions ?? 0)).toLocaleString()}`}
+                value={loading ? "—" : `$${Number((data?.totalRevenue ?? 0) - (data?.totalCommissions ?? 0)).toLocaleString()}`}
                 change="+10.2%"
                 changeType="positive"
                 icon={TrendingUp}

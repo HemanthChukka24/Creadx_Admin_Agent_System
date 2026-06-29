@@ -8,12 +8,16 @@ const cors = require('cors');
 const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const https = require('https');
 const { requireAuth, requireRole } = require('./middleware');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const cors = require('cors');
+// ---------- CORS ----------
 app.use(cors({
   origin: [
     'https://creadx-admin-agent-system.vercel.app',
@@ -22,15 +26,18 @@ app.use(cors({
   ],
   credentials: true,
 }));
-// Keep-alive: prevents Render free tier from sleeping
-const https = require('https');
+
+app.use(express.json());
+
+// ---------- Static file serving ----------
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ---------- Keep-alive (prevents Render free tier sleeping) ----------
 setInterval(() => {
   https.get('https://creadx-admin-agent-system.onrender.com/health', () => {});
-}, 10 * 60 * 1000); // ping every 10 minutes
+}, 10 * 60 * 1000);
 
-// Health check route
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
-app.use(express.json());
 
 // ---------- DB Pool ----------
 const pool = mysql.createPool({
@@ -40,14 +47,42 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
 });
+
+// ---------- Multer (image uploads) ----------
+const uploadDir = path.join(__dirname, 'uploads/packages');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `pkg-${unique}${path.extname(file.originalname)}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|webp/;
+    const ok = allowed.test(path.extname(file.originalname).toLowerCase())
+             && allowed.test(file.mimetype);
+    ok ? cb(null, true) : cb(new Error('Images only: jpg, png, webp'));
+  },
+});
+
+// ---------- Helper ----------
+async function getAgentProfileId(userId) {
+  const [rows] = await pool.query('SELECT id FROM agent_profiles WHERE user_id = ?', [userId]);
+  return rows.length ? rows[0].id : null;
+}
 
 // ============================================
 // AUTH
 // ============================================
 
-// POST /auth/login
 app.post('/auth/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
@@ -60,21 +95,13 @@ app.post('/auth/login', async (req, res) => {
       [email, role]
     );
 
-    if (!rows.length) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = rows[0];
+    if (!user.is_active) return res.status(403).json({ error: 'Account is disabled' });
 
-    if (!user.is_active) {
-      return res.status(403).json({ error: 'Account is disabled' });
-    }
-
-    // SECURITY FIX: plaintext fallback removed. bcrypt compare ONLY.
     const isMatch = await bcrypt.compare(password, user.password_hash).catch(() => false);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
@@ -84,12 +111,7 @@ app.post('/auth/login', async (req, res) => {
 
     res.json({
       token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        role: user.role
-      }
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -100,6 +122,7 @@ app.post('/auth/login', async (req, res) => {
 // ============================================
 // ADMIN ROUTES
 // ============================================
+
 app.get('/admin/metrics', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [[users]]       = await pool.query('SELECT COUNT(*) as count FROM users');
@@ -109,9 +132,9 @@ app.get('/admin/metrics', requireAuth, requireRole('admin'), async (req, res) =>
 
     res.json({
       totalUsers:     Number(users.count),
-      activeAgents:   Number(agents.count),    // ← was totalAgents
-      bookingsCount:  Number(bookings.count),   // ← was totalBookings
-      totalRevenue:   Number(commissions.total), // ← cast to number, not string
+      activeAgents:   Number(agents.count),
+      bookingsCount:  Number(bookings.count),
+      totalRevenue:   Number(commissions.total),
       conversionRate: '—',
       uptime:         '99.9%',
     });
@@ -121,7 +144,6 @@ app.get('/admin/metrics', requireAuth, requireRole('admin'), async (req, res) =>
   }
 });
 
-// GET /admin/agents — list all agents with status
 app.get('/admin/agents', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -131,31 +153,25 @@ app.get('/admin/agents', requireAuth, requireRole('admin'), async (req, res) => 
       JOIN users u ON ap.user_id = u.id
       ORDER BY ap.id DESC
     `);
-    res.json(rows);
+    res.json({ agents: rows });
   } catch (error) {
     console.error('List agents error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// PUT /admin/agents/:id/status — approve/reject/suspend agent
 app.put('/admin/agents/:id/status', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const { status } = req.body; // 'approved' | 'rejected' | 'suspended' | 'pending'
+    const { status } = req.body;
     const allowed = ['approved', 'rejected', 'suspended', 'pending'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
     }
-
     const [result] = await pool.query(
-      `UPDATE agent_profiles SET status = ? WHERE id = ?`,
+      'UPDATE agent_profiles SET status = ? WHERE id = ?',
       [status, req.params.id]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Agent not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Agent not found' });
     res.json({ message: `Agent status updated to ${status}` });
   } catch (error) {
     console.error('Update agent status error:', error);
@@ -166,9 +182,9 @@ app.put('/admin/agents/:id/status', requireAuth, requireRole('admin'), async (re
 app.get('/admin/bookings', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [bookings] = await pool.query(`
-      SELECT b.*, 
-             u.full_name AS agent_name,
-             c.full_name AS customer_name
+      SELECT b.*,
+             u.full_name  AS agent_name,
+             c.full_name  AS customer_name
       FROM bookings b
       LEFT JOIN agent_profiles ap ON b.agent_id = ap.id
       LEFT JOIN users u ON ap.user_id = u.id
@@ -177,26 +193,25 @@ app.get('/admin/bookings', requireAuth, requireRole('admin'), async (req, res) =
     `);
     res.json({ bookings });
   } catch (err) {
+    console.error('Admin bookings error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /admin/users — list all users
 app.get('/admin/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT id, full_name, email, role, is_active
+      SELECT id, full_name, email, role, is_active, created_at
       FROM users
       ORDER BY id DESC
     `);
-    res.json(rows);
+    res.json({ users: rows });
   } catch (error) {
     console.error('List users error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// GET /admin/revenue — revenue stats from real DB
 app.get('/admin/revenue', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [monthly] = await pool.query(`
@@ -208,38 +223,65 @@ app.get('/admin/revenue', requireAuth, requireRole('admin'), async (req, res) =>
       ORDER BY month ASC
     `);
     const [[totals]] = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) AS totalRevenue,
-             COALESCE(SUM(CASE WHEN is_paid THEN amount ELSE 0 END), 0) AS paidRevenue,
-             COALESCE(SUM(CASE WHEN NOT is_paid THEN amount ELSE 0 END), 0) AS unpaidRevenue
+      SELECT
+        COALESCE(SUM(amount), 0)                                    AS totalRevenue,
+        COALESCE(SUM(CASE WHEN is_paid     THEN amount ELSE 0 END), 0) AS totalCommissions,
+        COALESCE(SUM(CASE WHEN NOT is_paid THEN amount ELSE 0 END), 0) AS unpaidRevenue
       FROM commissions
     `);
-    res.json({ totals, monthly });
+    res.json({
+      totalRevenue:      Number(totals.totalRevenue),
+      totalCommissions:  Number(totals.totalCommissions),
+      monthlyData: monthly.map(m => ({
+        month:      m.month,
+        platform:   Number(m.revenue),
+        commission: Number(m.paidRevenue),
+      })),
+    });
   } catch (error) {
     console.error('Revenue error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ---- Packages CRUD (admin) ----
+// ---- Packages CRUD ----
 
-// GET /admin/packages
 app.get('/admin/packages', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const [rows] = await pool.query(`SELECT * FROM packages ORDER BY created_at DESC`);
-    res.json(rows);
+    const [rows] = await pool.query('SELECT * FROM packages ORDER BY created_at DESC');
+    res.json({ packages: rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST /admin/packages
+app.get('/admin/packages/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM packages WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Package not found' });
+    res.json({ package: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Image upload — must come BEFORE POST /admin/packages
+app.post('/admin/packages/upload-image',
+  requireAuth, requireRole('admin'),
+  upload.single('image'),
+  (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const url = `${process.env.BACKEND_URL}/uploads/packages/${req.file.filename}`;
+    res.json({ url });
+  }
+);
+
 app.post('/admin/packages', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { name, description, destination, price, duration_days, max_capacity, images, is_active } = req.body;
     if (!name || !destination || price == null || !duration_days) {
       return res.status(400).json({ error: 'name, destination, price and duration_days are required' });
     }
-
     const [result] = await pool.query(
       `INSERT INTO packages (name, description, destination, price, duration_days, max_capacity, images, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -251,62 +293,52 @@ app.post('/admin/packages', requireAuth, requireRole('admin'), async (req, res) 
         duration_days,
         max_capacity || 10,
         images ? JSON.stringify(images) : null,
-        is_active === undefined ? true : !!is_active
+        is_active === undefined ? true : !!is_active,
       ]
     );
-
     res.status(201).json({ id: result.insertId, message: 'Package created' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// PUT /admin/packages/:id
 app.put('/admin/packages/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { name, description, destination, price, duration_days, max_capacity, images, is_active } = req.body;
-
     const [result] = await pool.query(
       `UPDATE packages SET
-        name = COALESCE(?, name),
-        description = COALESCE(?, description),
-        destination = COALESCE(?, destination),
-        price = COALESCE(?, price),
+        name          = COALESCE(?, name),
+        description   = COALESCE(?, description),
+        destination   = COALESCE(?, destination),
+        price         = COALESCE(?, price),
         duration_days = COALESCE(?, duration_days),
-        max_capacity = COALESCE(?, max_capacity),
-        images = COALESCE(?, images),
-        is_active = COALESCE(?, is_active)
+        max_capacity  = COALESCE(?, max_capacity),
+        images        = COALESCE(?, images),
+        is_active     = COALESCE(?, is_active)
        WHERE id = ?`,
       [
-        name || null,
-        description || null,
-        destination || null,
-        price ?? null,
+        name          || null,
+        description   || null,
+        destination   || null,
+        price         ?? null,
         duration_days || null,
-        max_capacity || null,
-        images ? JSON.stringify(images) : null,
+        max_capacity  || null,
+        images        ? JSON.stringify(images) : null,
         is_active === undefined ? null : !!is_active,
-        req.params.id
+        req.params.id,
       ]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Package not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Package not found' });
     res.json({ message: 'Package updated' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// DELETE /admin/packages/:id
 app.delete('/admin/packages/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const [result] = await pool.query(`DELETE FROM packages WHERE id = ?`, [req.params.id]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Package not found' });
-    }
+    const [result] = await pool.query('DELETE FROM packages WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Package not found' });
     res.json({ message: 'Package deleted' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -314,14 +346,9 @@ app.delete('/admin/packages/:id', requireAuth, requireRole('admin'), async (req,
 });
 
 // ============================================
-// AGENT ROUTES (all scoped to the logged-in agent via JWT)
+// AGENT ROUTES
 // ============================================
 
-// Small helper: resolve agent_profiles.id from the JWT user id
-async function getAgentProfileId(userId) {
-  const [rows] = await pool.query('SELECT id FROM agent_profiles WHERE user_id = ?', [userId]);
-  return rows.length ? rows[0].id : null;
-}
 app.get('/agent/dashboard', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const [agentRows] = await pool.query(
@@ -330,7 +357,6 @@ app.get('/agent/dashboard', requireAuth, requireRole('agent'), async (req, res) 
     if (!agentRows.length) return res.status(404).json({ error: 'Agent profile not found' });
     const agent = agentRows[0];
 
-    // Use real column names: scheduled_date, destination_title, travelers
     const [trips] = await pool.query(`
       SELECT b.id, b.status, b.scheduled_date, b.end_date,
              b.destination_title, b.travelers,
@@ -343,31 +369,27 @@ app.get('/agent/dashboard', requireAuth, requireRole('agent'), async (req, res) 
       LIMIT 10
     `, [agent.id]);
 
-    const [activeCount] = await pool.query(
-      `SELECT COUNT(*) as count FROM bookings 
-       WHERE agent_id = ? AND status IN ('requested','confirmed')`,
+    const [[activeCount]] = await pool.query(
+      `SELECT COUNT(*) as count FROM bookings WHERE agent_id = ? AND status IN ('requested','confirmed')`,
       [agent.id]
     );
-
-    const [leadsCount] = await pool.query(
-      `SELECT COUNT(*) as count FROM leads 
-       WHERE agent_id = ? AND status IN ('new','contacted')`,
+    const [[leadsCount]] = await pool.query(
+      `SELECT COUNT(*) as count FROM leads WHERE agent_id = ? AND status IN ('new','contacted')`,
       [agent.id]
     );
-
-    const [earningsSum] = await pool.query(
+    const [[earningsSum]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) as total FROM commissions WHERE agent_id = ?`,
       [agent.id]
     );
 
     res.json({
-      agentName: agent.business_name,
-      rating: agent.average_rating,
-      status: agent.status,
-      activeBookings: activeCount[0].count,
-      pendingLeads: leadsCount[0].count,
-      totalEarnings: earningsSum[0].total,
-      upcomingTrips: trips
+      agentName:      agent.business_name,
+      rating:         agent.average_rating,
+      status:         agent.status,
+      activeBookings: Number(activeCount.count),
+      pendingLeads:   Number(leadsCount.count),
+      totalEarnings:  Number(earningsSum.total),
+      upcomingTrips:  trips,
     });
   } catch (err) {
     console.error('Dashboard error:', err.message);
@@ -386,8 +408,8 @@ app.get('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) =
     const [bookings] = await pool.query(`
       SELECT b.id, b.status, b.scheduled_date, b.end_date,
              b.destination_title, b.travelers,
-             u.full_name AS customer_name,
-             u.email AS customer_email
+             u.full_name  AS customer_name,
+             u.email      AS customer_email
       FROM bookings b
       LEFT JOIN users u ON b.customer_id = u.id
       WHERE b.agent_id = ?
@@ -410,7 +432,6 @@ app.post('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) 
     const agent = agentRows[0];
 
     const { customer_id, destination_title, scheduled_date, end_date, travelers } = req.body;
-
     await pool.query(`
       INSERT INTO bookings (agent_id, customer_id, destination_title, scheduled_date, end_date, travelers, status)
       VALUES (?, ?, ?, ?, ?, ?, 'requested')
@@ -423,11 +444,12 @@ app.post('/agent/bookings', requireAuth, requireRole('agent'), async (req, res) 
   }
 });
 
-// GET /agent/offers — available packages for agent to browse
 app.get('/agent/offers', requireAuth, requireRole('agent'), async (req, res) => {
   try {
-    const [rows] = await pool.query(`SELECT * FROM packages WHERE is_active = TRUE ORDER BY created_at DESC`);
-    res.json(rows);
+    const [rows] = await pool.query(
+      'SELECT * FROM packages WHERE is_active = TRUE ORDER BY created_at DESC'
+    );
+    res.json({ packages: rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -441,14 +463,13 @@ app.get('/agent/earnings', requireAuth, requireRole('agent'), async (req, res) =
     if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
     const agent = agentRows[0];
 
-    // Use destination_title instead of package_name, customer via users join
     const [commissions] = await pool.query(`
       SELECT c.id, c.booking_id, c.amount, c.is_paid, c.created_at, c.paid_at,
              b.destination_title AS package_name,
-             u.full_name AS customer_name
+             u.full_name         AS customer_name
       FROM commissions c
       LEFT JOIN bookings b ON c.booking_id = b.id
-      LEFT JOIN users u ON b.customer_id = u.id
+      LEFT JOIN users u    ON b.customer_id = u.id
       WHERE c.agent_id = ?
       ORDER BY c.created_at DESC
     `, [agent.id]);
@@ -464,7 +485,6 @@ app.get('/agent/earnings', requireAuth, requireRole('agent'), async (req, res) =
   }
 });
 
-// GET /agent/profile
 app.get('/agent/profile', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -473,102 +493,81 @@ app.get('/agent/profile', requireAuth, requireRole('agent'), async (req, res) =>
       JOIN users u ON ap.user_id = u.id
       WHERE ap.user_id = ?
     `, [req.user.id]);
-
     if (!rows.length) return res.status(404).json({ error: 'Agent profile not found' });
-    res.json(rows[0]);
+    res.json({ agent: rows[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// PUT /agent/profile
 app.put('/agent/profile', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const { business_name, city, service_type } = req.body;
-
     const [result] = await pool.query(
       `UPDATE agent_profiles SET
         business_name = COALESCE(?, business_name),
-        city = COALESCE(?, city),
-        service_type = COALESCE(?, service_type)
+        city          = COALESCE(?, city),
+        service_type  = COALESCE(?, service_type)
        WHERE user_id = ?`,
       [business_name || null, city || null, service_type || null, req.user.id]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Agent profile not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Agent profile not found' });
     res.json({ message: 'Profile updated' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ---- Leads CRUD (agent) ----
+// ---- Leads CRUD ----
 
-// GET /agent/leads
 app.get('/agent/leads', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const agentId = await getAgentProfileId(req.user.id);
     if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
-
     const [rows] = await pool.query(
-      `SELECT * FROM leads WHERE agent_id = ? ORDER BY created_at DESC`,
+      'SELECT * FROM leads WHERE agent_id = ? ORDER BY created_at DESC',
       [agentId]
     );
-    res.json(rows);
+    res.json({ leads: rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST /agent/leads
 app.post('/agent/leads', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const agentId = await getAgentProfileId(req.user.id);
     if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
-
     const { customer_name, customer_email, customer_phone, status, notes } = req.body;
-    if (!customer_name) {
-      return res.status(400).json({ error: 'customer_name is required' });
-    }
-
+    if (!customer_name) return res.status(400).json({ error: 'customer_name is required' });
     const [result] = await pool.query(
       `INSERT INTO leads (agent_id, customer_name, customer_email, customer_phone, status, notes)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [agentId, customer_name, customer_email || null, customer_phone || null, status || 'new', notes || null]
     );
-
     res.status(201).json({ id: result.insertId, message: 'Lead created' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// PUT /agent/leads/:id
 app.put('/agent/leads/:id', requireAuth, requireRole('agent'), async (req, res) => {
   try {
     const agentId = await getAgentProfileId(req.user.id);
     if (!agentId) return res.status(404).json({ error: 'Agent profile not found' });
-
     const { customer_name, customer_email, customer_phone, status, notes } = req.body;
-
     const [result] = await pool.query(
       `UPDATE leads SET
-        customer_name = COALESCE(?, customer_name),
+        customer_name  = COALESCE(?, customer_name),
         customer_email = COALESCE(?, customer_email),
         customer_phone = COALESCE(?, customer_phone),
-        status = COALESCE(?, status),
-        notes = COALESCE(?, notes)
+        status         = COALESCE(?, status),
+        notes          = COALESCE(?, notes)
        WHERE id = ? AND agent_id = ?`,
-      [customer_name || null, customer_email || null, customer_phone || null, status || null, notes || null, req.params.id, agentId]
+      [customer_name || null, customer_email || null, customer_phone || null,
+       status || null, notes || null, req.params.id, agentId]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Lead not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Lead not found' });
     res.json({ message: 'Lead updated' });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -118,7 +118,54 @@ app.post('/auth/login', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// POST /auth/register-agent
+app.post('/auth/register-agent', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
 
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'name, email and password are required' });
+    }
+
+    // Check if email already exists
+    const [existing] = await pool.query(
+      'SELECT id FROM users WHERE email = ?', [email]
+    );
+    if (existing.length) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    // Hash password
+    const password_hash = await bcrypt.hash(password, 10);
+
+    // Insert into users table
+    const [userResult] = await pool.query(
+      `INSERT INTO users (full_name, email, password_hash, role, is_active)
+       VALUES (?, ?, ?, 'agent', true)`,
+      [name, email, password_hash]
+    );
+
+    const userId = userResult.insertId;
+
+    // Insert into agent_profiles table
+    // identity_document_url is NOT NULL so we use 'pending_upload' as placeholder
+    await pool.query(
+      `INSERT INTO agent_profiles
+         (user_id, business_name, city, service_type, identity_document_url, status)
+       VALUES (?, ?, 'Not set', 'General', 'pending_upload', 'pending')`,
+      [userId, name]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Agent profile created successfully! Please wait for admin approval before logging in.'
+    });
+
+  } catch (error) {
+    console.error('Register agent error:', error);
+    res.status(500).json({ error: 'Registration failed: ' + error.message });
+  }
+});
 // ============================================
 // ADMIN ROUTES
 // ============================================

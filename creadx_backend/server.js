@@ -16,6 +16,22 @@ const { requireAuth, requireRole } = require('./middleware');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const nodemailer = require('nodemailer');
+
+// In-memory OTP store { email: { code, expiresAt, name } }
+// Simple and works fine for MVP — no DB table needed
+const otpStore = new Map();
+
+// Email transporter
+const transporter = nodemailer.createTransport({
+  host: 'smtp.zoho.com',
+  port: 465,
+  secure: true, // true for port 465
+  auth: {
+    user: process.env.SMTP_EMAIL,
+    pass: process.env.SMTP_PASSWORD,
+  },
+});
 
 // ---------- CORS ----------
 app.use(cors({
@@ -116,6 +132,163 @@ app.post('/auth/login', async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// ─── STEP 1: Send OTP to email ───────────────────────────────
+app.post('/auth/send-otp', async (req, res) => {
+  try {
+    const { email, name } = req.body;
+    if (!email || !name) {
+      return res.status(400).json({ error: 'email and name are required' });
+    }
+
+    // Check if email already registered
+    const [existing] = await pool.query(
+      'SELECT id FROM users WHERE email = ?', [email]
+    );
+    if (existing.length) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    // Generate 6-digit OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Store in memory
+    otpStore.set(email, { code, expiresAt, name });
+
+    // Send email
+    await transporter.sendMail({
+      from: `"CreadX Platform" <${process.env.SMTP_EMAIL}>`,
+      to: email,
+      subject: 'Your CreadX Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f9fafb; border-radius: 12px;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h1 style="color: #0f172a; font-size: 24px; margin: 0;">CreadX</h1>
+            <p style="color: #64748b; margin: 4px 0 0;">Tourism Management Platform</p>
+          </div>
+          <div style="background: white; border-radius: 8px; padding: 24px; border: 1px solid #e2e8f0;">
+            <p style="color: #0f172a; font-size: 16px; margin: 0 0 8px;">Hi ${name},</p>
+            <p style="color: #475569; font-size: 14px; margin: 0 0 24px;">
+              Use the code below to verify your email and create your agent account.
+              This code expires in <strong>10 minutes</strong>.
+            </p>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px;">
+              <p style="color: #64748b; font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 1px;">Verification Code</p>
+              <p style="color: #0f172a; font-size: 40px; font-weight: bold; letter-spacing: 8px; margin: 0; font-family: monospace;">${code}</p>
+            </div>
+            <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+              If you didn't request this, you can safely ignore this email.
+            </p>
+          </div>
+        </div>
+      `,
+    });
+
+    console.log(`OTP sent to ${email}`);
+    res.json({ success: true, message: 'Verification code sent to your email.' });
+
+  } catch (error) {
+    console.error('Send OTP error:', error.message);
+    res.status(500).json({ error: 'Failed to send verification email. Please try again.' });
+  }
+});
+
+// ─── STEP 2: Verify OTP ──────────────────────────────────────
+app.post('/auth/verify-otp', (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: 'email and code are required' });
+  }
+
+  const record = otpStore.get(email);
+
+  if (!record) {
+    return res.status(400).json({ error: 'No verification code found. Please request a new one.' });
+  }
+  if (Date.now() > record.expiresAt) {
+    otpStore.delete(email);
+    return res.status(400).json({ error: 'Code has expired. Please request a new one.' });
+  }
+  if (record.code !== code.toString().trim()) {
+    return res.status(400).json({ error: 'Incorrect code. Please try again.' });
+  }
+
+  // Mark as verified (keep in store for password step)
+  otpStore.set(email, { ...record, verified: true });
+  res.json({ success: true, message: 'Email verified successfully.' });
+});
+
+// ─── STEP 3: Complete registration (after OTP verified) ──────
+app.post('/auth/register-agent', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'email and password are required' });
+    }
+
+    // Must have a verified OTP
+    const record = otpStore.get(email);
+    if (!record || !record.verified) {
+      return res.status(403).json({ error: 'Email not verified. Please complete OTP verification first.' });
+    }
+
+    const name = record.name;
+
+    // Double-check email not already registered
+    const [existing] = await pool.query(
+      'SELECT id FROM users WHERE email = ?', [email]
+    );
+    if (existing.length) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    // Hash password and create user
+    const password_hash = await bcrypt.hash(password, 10);
+
+    const [userResult] = await pool.query(
+      `INSERT INTO users (full_name, email, password_hash, role, is_active)
+       VALUES (?, ?, ?, 'agent', true)`,
+      [name, email, password_hash]
+    );
+
+    const userId = userResult.insertId;
+
+    // Create agent profile (status: pending — needs admin approval)
+    await pool.query(
+      `INSERT INTO agent_profiles
+         (user_id, business_name, city, service_type, identity_document_url, status)
+       VALUES (?, ?, 'Not set', 'General', 'pending_upload', 'pending')`,
+      [userId, name]
+    );
+
+    // Clean up OTP store
+    otpStore.delete(email);
+
+    // Send welcome email
+    transporter.sendMail({
+      from: `"CreadX Platform" <${process.env.SMTP_EMAIL}>`,
+      to: email,
+      subject: 'Welcome to CreadX — Account Under Review',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+          <h1 style="color: #0f172a;">Welcome, ${name}! 🎉</h1>
+          <p style="color: #475569;">Your CreadX agent account has been created successfully.</p>
+          <p style="color: #475569;">Our admin team will review your profile and activate it shortly. You'll be able to log in once approved.</p>
+          <p style="color: #94a3b8; font-size: 12px; margin-top: 24px;">— The CreadX Team</p>
+        </div>
+      `,
+    }).catch(err => console.error('Welcome email failed:', err.message));
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created! An admin will review and approve your profile.',
+    });
+
+  } catch (error) {
+    console.error('Register agent error:', error.message);
+    res.status(500).json({ error: 'Registration failed: ' + error.message });
   }
 });
 // POST /auth/register-agent

@@ -24,15 +24,19 @@ const otpStore = new Map();
 
 // Email transporter
 const transporter = nodemailer.createTransport({
-  host: 'smtp.zoho.com',
+  host: 'smtp.zoho.in',
   port: 465,
-  secure: true, // true for port 465
+  secure: true,
+  pool: true,              // ← reuse connections instead of creating new ones
+  maxConnections: 3,
   auth: {
     user: process.env.SMTP_EMAIL,
     pass: process.env.SMTP_PASSWORD,
   },
+  tls: {
+    rejectUnauthorized: false,
+  },
 });
-
 // ---------- CORS ----------
 app.use(cors({
   origin: [
@@ -142,7 +146,6 @@ app.post('/auth/send-otp', async (req, res) => {
       return res.status(400).json({ error: 'email and name are required' });
     }
 
-    // Check if email already registered
     const [existing] = await pool.query(
       'SELECT id FROM users WHERE email = ?', [email]
     );
@@ -150,15 +153,15 @@ app.post('/auth/send-otp', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
-    // Generate 6-digit OTP
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-    // Store in memory
+    const expiresAt = Date.now() + 10 * 60 * 1000;
     otpStore.set(email, { code, expiresAt, name });
 
-    // Send email
-    await transporter.sendMail({
+    // ✅ Respond immediately — don't wait for email to send
+    res.json({ success: true, message: 'Verification code sent to your email.' });
+
+    // Send email in background after responding
+    transporter.sendMail({
       from: `"CreadX Platform" <${process.env.SMTP_EMAIL}>`,
       to: email,
       subject: 'Your CreadX Verification Code',
@@ -184,10 +187,13 @@ app.post('/auth/send-otp', async (req, res) => {
           </div>
         </div>
       `,
+    }).then(() => {
+      console.log(`OTP sent to ${email}`);
+    }).catch(err => {
+      console.error(`OTP email failed for ${email}:`, err.message);
+      // Remove from store if email failed so user can retry
+      otpStore.delete(email);
     });
-
-    console.log(`OTP sent to ${email}`);
-    res.json({ success: true, message: 'Verification code sent to your email.' });
 
   } catch (error) {
     console.error('Send OTP error:', error.message);
